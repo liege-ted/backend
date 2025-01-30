@@ -1,0 +1,72 @@
+# Custom
+images/
+Properties/
+
+# Build artifacts & binaries
+bin/
+obj/
+out/
+
+# Debug / Release folders
+Debug/
+Release/
+
+# User-specific files & configurations
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.ide
+*.sln.docstates
+
+# Rider & JetBrains
+.idea/
+*.sln.iml
+
+# Logs & database files
+logs/
+*.log
+!log/.gitkeep
+appsettings.json
+appsettings.Local.json
+appsettings.Development.json
+
+# Dependency caches
+node_modules/
+packages/
+.vscode/
+.npm/
+.nuget/
+
+# Temporary files
+*.pid
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# ASP.NET Identity / Entity Framework
+app.db
+app.db-journal
+*.ldb
+Migrations/
+
+# Docker-related files
+docker-compose.override.yml
+
+# Secrets & Environment Configurations
+.env
+.env.local
+secrets.json
+secrets/
+
+# OS-specific junk files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Git & IDE files
+.git/
+*.gitattributes
+
