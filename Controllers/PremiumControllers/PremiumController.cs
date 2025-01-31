@@ -126,7 +126,7 @@ namespace TED.API.Controllers.PremiumControllers
                 { "client_secret", _clientSecret },
                 { "grant_type", "authorization_code" },
                 { "code", code },
-                { "redirect_uri", "https://premium.liege.dev" },
+                { "redirect_uri", "https://api.liege.dev/premium" },
             };
 
             // encode content and post to discord oauth2
