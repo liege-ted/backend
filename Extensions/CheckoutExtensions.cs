@@ -4,20 +4,23 @@ using TED.API.Models;
 
 namespace TED.API.Extensions
 {
-    public class CheckoutExtensions
+    public static class CheckoutExtensions
     {
-        public static string CreateCheckoutSessionLink(Customer customer, string prodId, List<Guild> guilds, ulong userid)
+        /// <summary>
+        /// Creates a stripe checkout session link for the user to purchase a subscription
+        /// </summary>
+        /// <param name="customer">A stripe customer; to be created when authorized</param>
+        /// <param name="prodId">The stripe product id of the product to be sold</param>
+        /// <param name="guilds">An array of Guild objects that the user has permission to manage</param>
+        /// <param name="userid">The id of the user associated with the stripe customer</param>
+        /// <returns>A stripe checkout session link</returns>
+        public static string CreateCheckoutSessionLink(Customer customer, string prodId, Guild[] guilds, string userid)
         {
             var prodService = new ProductService();
             var product = prodService.Get(prodId);
-            Console.WriteLine($"Product: " + product.Id);
 
             var priceService = new PriceService();
             var price = priceService.Get(product.DefaultPriceId);
-            Console.WriteLine($"Price: " + price.Id);
-
-            Console.WriteLine($"Customer: " + customer.Id);
-            Console.WriteLine($"User Id: " + userid);
 
             var options = new SessionCreateOptions
             {
@@ -26,26 +29,26 @@ namespace TED.API.Extensions
                 Mode = "subscription",
                 //Customer = customer.Id,
                 CustomerEmail = customer.Email,
-                PaymentMethodTypes = new List<string>
-                {
+                PaymentMethodTypes =
+                [
                     "card",
-                    "cashapp",
-                },
-                LineItems = new List<SessionLineItemOptions>
-                {
+                    "cashapp"
+                ],
+                LineItems =
+                [
                     new SessionLineItemOptions
                     {
                         Quantity = 1,
                         Price = price.Id,
-                    },
-                },
+                    }
+                ],
                 SubscriptionData = new SessionSubscriptionDataOptions
                 {
                     Description = "You will be charged $2.99 every month until you cancel your subscription.",
                 },
                 AllowPromotionCodes = true,
-                CustomFields = new List<SessionCustomFieldOptions>
-                {
+                CustomFields =
+                [
                     new SessionCustomFieldOptions
                     {
                         Key = "guild",
@@ -60,7 +63,7 @@ namespace TED.API.Extensions
                             Options = StringToDropDownOptions(guilds, userid)
                         }
                     }
-                },
+                ],
                 CustomText = new SessionCustomTextOptions
                 {
                     Submit = new SessionCustomTextSubmitOptions
@@ -75,7 +78,11 @@ namespace TED.API.Extensions
             return create.Url;
         }
 
-        private static List<SessionCustomFieldDropdownOptionOptions> StringToDropDownOptions(List<Guild> options, ulong userid)
+        /// <summary>
+        /// Builds the stripe dropdown options from the guilds the user has permission to manage
+        /// </summary>
+        /// <returns>A list of stripes dropdown option objects</returns>
+        private static List<SessionCustomFieldDropdownOptionOptions> StringToDropDownOptions(Guild[] options, string userid)
         {
             return options.Select(option => 
                 new SessionCustomFieldDropdownOptionOptions 

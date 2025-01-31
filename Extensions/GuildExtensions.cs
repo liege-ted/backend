@@ -1,4 +1,5 @@
 ﻿using Discord.Rest;
+using Newtonsoft.Json;
 using TED.API.Models;
 
 namespace TED.API.Extensions
@@ -38,5 +39,33 @@ namespace TED.API.Extensions
 
             return permissionGuilds.ToArray();
         }
+        
+        /// <summary>
+        /// Gets the guilds the user has permission to manage; HttpClient must be in an authorized state
+        /// </summary>
+        /// <param name="client">MUST BE POST AUTHORIZATION</param>
+        /// <returns>An array of Guild objects</returns>
+        public static async Task<Guild[]?> GetPermissionGuildsAsync(this HttpClient client)
+        {
+            var getResult = await client.GetAsync("https://discord.com/api/v10/users/@me/guilds");
+            
+            var permissionGuilds = new List<Guild>();
+
+            var guilds = JsonConvert.DeserializeObject<Guild[]>(await getResult.Content.ReadAsStringAsync());
+            if (guilds is null) return null;
+            
+            foreach (var guild in guilds)
+            {
+                var permissions = Convert.ToInt64(guild.Permissions);
+                // const int manageMessages = 14;
+                const int manageGuild = 32;
+        
+                if ((permissions & manageGuild) != 0)
+                    permissionGuilds.Add(guild);
+            }
+
+            return permissionGuilds.ToArray();
+        }
+
     }
 }

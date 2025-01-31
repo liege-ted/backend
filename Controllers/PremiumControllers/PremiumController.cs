@@ -1,20 +1,20 @@
 ﻿using System.Net;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc;
-using MongoDB.Driver;
-using StackExchange.Redis.KeyspaceIsolation;
 using Stripe;
 using Stripe.Checkout;
 using TED.Additions;
-using TED.Services;
+using TED.API.Extensions;
 
 namespace TED.API.Controllers.PremiumControllers
 {
-
     [ApiController]
     [Route("premium")]
-    public class PremiumController : BaseController
+    public class PremiumController(HttpClient httpClient) : BaseController
     {
+        private readonly string _clientId = Environment.GetEnvironmentVariable("CLIENT_ID")!;
+        private readonly string _clientSecret = Environment.GetEnvironmentVariable("CLIENT_SECRET")!;
+        
         [HttpPost("action")]
         public async Task<IActionResult> HandlePremiumActionAsync()
         {
@@ -30,7 +30,9 @@ namespace TED.API.Controllers.PremiumControllers
                         case Events.CheckoutSessionCompleted:
                         {
                             // make the user and guild premium
-                            var data = stripeEvent.Data.Object as Session;
+                            if (stripeEvent.Data.Object is not Session data) break;
+                            
+                            // get guild id from custom dropdown field; 'S' is the separator
                             var selection = data.CustomFields[0].Dropdown.Value;
                             var guildid = selection.Split("S")[0];
 
@@ -48,60 +50,60 @@ namespace TED.API.Controllers.PremiumControllers
                         }
                         case Events.InvoicePaymentSucceeded:
                         {
-                            var data = stripeEvent.Data.Object as Invoice;
+                            if (stripeEvent.Data.Object is not Invoice data) break;
 
-                            var gs = await PremiumMethods.GetOrCreatePremiumAsync(guildid, data.SubscriptionId);
+                            var gs = await PremiumMethods.GetPremiumFromSubscriptionAsync(data.SubscriptionId);
+                            if (gs is null) break;
                             
-                            // just for safety, set premium to true and set cusid
-                            // again even tho they should 100% be the same
                             await gs.ModifyAsync(x =>
                             {
-                                x.Premium.CustomerId = data.CustomerId;
+                                x.Premium!.CustomerId = data.CustomerId;
                                 x.Premium.IsPremium = true;
-                                x.Premium.TotalPaid += double.Parse(data.AmountTotal / 100);
+                                x.Premium.TotalPaid += data.AmountPaid / 100;
                                 x.Premium.LastPaid = DateTime.UtcNow;
                             });
                             
-                            var premium = await DatabaseExtensions.GetPremiumBySubscriptionIdAsync(data.Subscription.Id);
-                            await DatabaseExtensions.IncrementPaymentAsync(premium.GuildId, data.AmountPaid / 100);
-                            Console.WriteLine($"PAYMENT SUCCEEDED from {premium.GuildId}");
                             break;
                         }
                         case Events.CustomerSubscriptionPaused:
                         {
-                            var data = stripeEvent.Data.Object as Subscription;
+                            if (stripeEvent.Data.Object is not Subscription data) break;
 
-                            var premium = MongoService.GuildSettings.Find(x => x.Premium.SubscriptionId == data.Id)
-                                .FirstOrDefault();
-                            await DatabaseExtensions.SetPremiumStatusAsync(premium.GuildId, false, data.Id);
-                            Console.WriteLine($"PREMIUM PAUSED for {premium.GuildId}");
+                            var gs = await PremiumMethods.GetPremiumFromSubscriptionAsync(data.Id);
+                            if (gs is null) break;
+                            
+                            await gs.ModifyAsync(x =>
+                            {
+                                x.Premium.IsPremium = false;
+                            });
+                            
                             break;
                         }
                         case Events.CustomerSubscriptionDeleted:
                         {
-                            var data = stripeEvent.Data.Object as Subscription;
-
-                            var premium = MongoService.GuildSettings.Find(x => x.Premium.SubscriptionId == data.Id)
-                                .FirstOrDefault();
-                            await DatabaseExtensions.SetPremiumStatusAsync(premium.GuildId, false, data.Id);
-                            Console.WriteLine($"PREMIUM DELETED for {premium.GuildId}");
+                            if (stripeEvent.Data.Object is not Subscription data) break;
+                            
+                            var gs = await PremiumMethods.GetPremiumFromSubscriptionAsync(data.Id);
+                            if (gs is null) break;
+                            
+                            await gs.ModifyAsync(x =>
+                            {
+                                x.Premium.IsPremium = false;
+                                x.Premium.SubscriptionId = ""; // this needs to be done when a subscription is deleted!!
+                            });
+                            
                             break;
                         }
                         default:
                             // Unexpected event type
                             Console.WriteLine("Unhandled event type: {0}", stripeEvent.Type);
-                            return NotFound();
+                            return JsonNotFound();
                     }
-                }
-                catch (JsonException ex)
-                {
-                    Console.WriteLine($"JSON deserialization error: {ex.Message}");
-                    return BadRequest("Bad request (1)");
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Unhandled exception: {ex.Message}");
-                    return BadRequest("Bad request (2)");
+                    return JsonBadRequest();
                 }
             }
 
@@ -109,73 +111,73 @@ namespace TED.API.Controllers.PremiumControllers
         }
         
         [HttpGet("oauth")]
-        public async Task<IActionResult> Get(string? code)
+        public async Task<IActionResult> HttpGetOAuthAsync(string? code)
         {
             // if code is null, redirect to discord oauth2
             if (code == null)
             {
                 return Redirect("https://discord.com/api/oauth2/authorize?client_id=879360985738117120&response_type=code&redirect_uri=https%3A%2F%2Fpremium.liege.dev&scope=email+identify+guilds");
             }
-            // else do discord oauth
-            else
+            
+            // oauth data for discord
+            var oauthData = new Dictionary<string, string>
             {
-                // oauth data for discord
-                var oauthData = new Dictionary<string, string>
+                { "client_id", _clientId },
+                { "client_secret", _clientSecret },
+                { "grant_type", "authorization_code" },
+                { "code", code },
+                { "redirect_uri", "https://premium.liege.dev" },
+            };
+
+            // encode content and post to discord oauth2
+            var content = new FormUrlEncodedContent(oauthData);
+            var result = await httpClient.PostAsync("https://discord.com/api/v10/oauth2/token", content);
+
+            if (result.StatusCode != HttpStatusCode.OK) return BadRequest("Discord OAuth failed! (2)");
+            
+            // if post request is successful, get user data
+            try
+            {
+                // do discord oauth2 stuff
+                var postData = JsonNode.Parse(await result.Content.ReadAsStringAsync());
+                if (postData is null) return JsonBadRequest("Failed to parse data!");
+                    
+                var token = postData["access_token"];
+                httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {token}");
+                var getResult = await httpClient.GetAsync("https://discord.com/api/v10/users/@me");
+
+                var getData = JsonNode.Parse(await getResult.Content.ReadAsStringAsync());
+                if (getData?["id"] is null) return JsonBadRequest("Failed to parse data!");
+                    
+                // get guilds the user has permission to manage
+                var guilds = await httpClient.GetPermissionGuildsAsync();
+                if (guilds is null) return JsonBadRequest("Failed to get guilds!");
+                    
+                // get user id from Discord response
+                var userid = getData["id"]!.ToString();
+
+                StripeConfiguration.ApiKey = Environment.GetEnvironmentVariable("STRIPE_SECRET_KEY");
+
+                // create a new customer
+                var options = new CustomerCreateOptions
                 {
-                    { "client_id", "879360985738117120" },
-                    { "client_secret", "u7b_QJ4PWne6AvC0wtOFg04sO_1XPI38" },
-                    { "grant_type", "authorization_code" },
-                    { "code", code },
-                    { "redirect_uri", "https://premium.liege.dev" },
+                    Name = getData["username"]?.ToString(),
+                    Description = $"{userid}",
+                    Email = getData["email"]?.ToString(),
                 };
 
-                // encode content and post to discord oauth2
-                var content = new FormUrlEncodedContent(oauthData);
-                var result = await _client.PostAsync("https://discord.com/api/v10/oauth2/token", content);
+                // create a new customer and get the link to the checkout session
+                var service = new CustomerService();
+                var cus = await service.CreateAsync(options);
+                var prodid = Environment.GetEnvironmentVariable("STRIPE_PRODUCT_ID");
 
-                // if post request is successful, get user data
-                if (result.StatusCode == HttpStatusCode.OK)
-                {
-                    try
-                    {
-                        // do discord oauth2 stuff
-                        _client.CancelPendingRequests();
-                        var postData = JsonNode.Parse(await result.Content.ReadAsStringAsync());
-                        var token = postData["access_token"];
-                        _client.DefaultRequestHeaders.Add("Authorization", $"Bearer {token}");
-                        var getResult = await _client.GetAsync("https://discord.com/api/v10/users/@me");
+                var link = CheckoutExtensions.CreateCheckoutSessionLink(cus, prodid!, guilds, userid);
 
-                        var getData = JsonNode.Parse(await getResult.Content.ReadAsStringAsync());
-                        var guilds = await DiscordExtensions.GetPermissionUserGuildsAsync(_client);
-                        var userid = Convert.ToUInt64(getData["id"].ToString());
-
-                        //StripeConfiguration.ApiKey = "sk_test_51ORN0JDSx6HgmfF4ZC2zrN2dLCfsx8JHklRa8AXJeOn6MLpqNsP2AivW67AaX6oaO4qGj1YbPRrysfO3nIlGI4lG00OE1VasdA";
-                        StripeConfiguration.ApiKey = Environment.GetEnvironmentVariable("STRIPE_SECRET_KEY");
-
-                        var options = new CustomerCreateOptions
-                        {
-                            Name = getData["username"].ToString(),
-                            Description = $"{userid}",
-                            Email = getData["email"].ToString(),
-                        };
-
-                        var service = new CustomerService();
-                        var cus = service.Create(options);
-                        var prodid = Environment.GetEnvironmentVariable("STRIPE_PRODUCT_ID");
-
-                        var link = CheckoutExtensions.CreateCheckoutSessionLink(cus, prodid, guilds, userid);
-
-                        return Redirect(link);
-                    }
-                    catch
-                    {
-                        return BadRequest("Discord OAuth failed! (1)");
-                    }
-                }
-                else
-                {
-                    return BadRequest("Discord OAuth failed! (2)");
-                }
+                return Redirect(link);
+            }
+            catch
+            {
+                return JsonInternalServerError("Discord OAuth failed!");
             }
         }
     }
