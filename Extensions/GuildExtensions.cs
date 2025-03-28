@@ -21,20 +21,24 @@ namespace TED.API.Extensions
                 guilds.Where(x => (Convert.ToInt64(x.Permissions.RawValue) & manageGuild) != 0).ToList();
             foreach (var guild in permissionRestGuilds)
             {
-                // check if bot is in guild
-                var restGuild = await discordClient.GetGuildAsync(guild.Id);
-                var inGuild = restGuild != null;
-
-                var obj = new Guild
+                try
                 {
-                    Id = guild.Id.ToString(),
-                    Name = guild.Name,
-                    Icon = guild.IconUrl ?? "_",
-                    Permissions = guild.Permissions.ToString(),
-                    InGuild = inGuild
-                };
+                    // check if bot is in guild
+                    var restGuild = await discordClient.GetGuildAsync(guild.Id);
+                    var inGuild = restGuild != null;
 
-                permissionGuilds.Add(obj);
+                    var obj = new Guild
+                    {
+                        Id = guild.Id.ToString(),
+                        Name = guild.Name,
+                        Icon = guild.IconUrl ?? "_",
+                        Permissions = guild.Permissions.ToString(),
+                        InGuild = inGuild
+                    };
+
+                    permissionGuilds.Add(obj);
+                }
+                catch { continue; }
             }
 
             return permissionGuilds.ToArray();

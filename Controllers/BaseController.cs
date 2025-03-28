@@ -3,6 +3,7 @@
 namespace TED.API.Controllers
 {
     [ApiController]
+    [Route("[controller]")]
     public class BaseController : ControllerBase
     {
         // custom methods for returning json responses
